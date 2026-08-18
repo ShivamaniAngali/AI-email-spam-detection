@@ -3,6 +3,7 @@ import pickle
 import re
 import os
 import base64
+import json
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -52,17 +53,19 @@ if "classified_emails" not in st.session_state:
 # LOAD MODEL
 # ============================================================
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 try:
 
     with open(
-        "spam_model.pkl",
+        os.path.join(BASE_DIR, "spam_model.pkl"),
         "rb"
     ) as file:
 
         model = pickle.load(file)
 
     with open(
-        "vectorizer.pkl",
+        os.path.join(BASE_DIR, "vectorizer.pkl"),
         "rb"
     ) as file:
 
@@ -89,8 +92,8 @@ except FileNotFoundError:
 # LOAD GRAPH FILES
 # ============================================================
 
-ACCURACY_GRAPH = "training_validation_accuracy.png"
-LOSS_GRAPH = "training_validation_loss.png"
+ACCURACY_GRAPH = os.path.join(BASE_DIR, "training_validation_accuracy.png")
+LOSS_GRAPH = os.path.join(BASE_DIR, "training_validation_loss.png")
 
 
 # ============================================================
@@ -101,8 +104,19 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly"
 ]
 
-TOKEN_FILE = os.getenv("GMAIL_TOKEN_PATH", "gmail_token.json")
-CREDENTIALS_FILE = os.getenv("GMAIL_CREDENTIALS_PATH", "credentials.json")
+TOKEN_FILE = os.getenv(
+    "GMAIL_TOKEN_PATH",
+    os.path.join(BASE_DIR, "gmail_token.json")
+)
+CREDENTIALS_FILE = os.getenv(
+    "GMAIL_CREDENTIALS_PATH",
+    os.path.join(BASE_DIR, "credentials.json")
+)
+
+# Render/cloud deployments do not have a browser on the server.
+# A previously authorized Gmail token should be supplied through
+# the GMAIL_TOKEN_JSON environment variable.
+IS_RENDER = bool(os.getenv("RENDER"))
 
 
 # ============================================================
@@ -406,69 +420,147 @@ else:
 # GMAIL AUTHENTICATION
 # ============================================================
 
-def authenticate_gmail():
+def _load_json_from_streamlit_secrets(key):
+    """Disabled on Render; environment variables are used instead."""
+    return None
 
-    creds = None
-
-    if os.path.exists(TOKEN_FILE):
-
+def _load_gmail_credentials_config():
+    """Load Google OAuth client configuration safely."""
+    # 1. Render/environment variable
+    raw = os.getenv("GMAIL_CREDENTIALS_JSON")
+    if raw:
         try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            st.error("❌ GMAIL_CREDENTIALS_JSON contains invalid JSON.")
+            return None
 
-            creds = Credentials.from_authorized_user_file(
+    # 2. Streamlit secrets (local/cloud)
+    secret_config = _load_json_from_streamlit_secrets("gmail_credentials")
+    if secret_config:
+        return secret_config
+
+    # 3. Local credentials.json
+    if os.path.exists(CREDENTIALS_FILE):
+        try:
+            with open(CREDENTIALS_FILE, "r", encoding="utf-8") as file:
+                return json.load(file)
+        except Exception as e:
+            st.error(f"❌ Could not read credentials.json: {e}")
+            return None
+
+    return None
+
+
+def _load_gmail_token():
+    """Load an authorized Gmail token from environment or local disk."""
+    # Render/environment variable
+    raw = os.getenv("GMAIL_TOKEN_JSON")
+    if raw:
+        try:
+            return Credentials.from_authorized_user_info(
+                json.loads(raw),
+                SCOPES
+            )
+        except Exception as e:
+            st.error(f"❌ GMAIL_TOKEN_JSON is invalid: {e}")
+            return None
+
+    # Local token file
+    if os.path.exists(TOKEN_FILE):
+        try:
+            return Credentials.from_authorized_user_file(
                 TOKEN_FILE,
                 SCOPES
             )
-
         except Exception:
+            return None
 
+    return None
+
+
+def _save_gmail_token(creds):
+    """Save a token locally when possible."""
+    try:
+        with open(TOKEN_FILE, "w", encoding="utf-8") as token:
+            token.write(creds.to_json())
+    except Exception:
+        # Render's filesystem should not be relied upon for credentials.
+        pass
+
+
+def authenticate_gmail():
+    """Authenticate Gmail.
+
+    Local:
+        Uses credentials.json/Streamlit secrets and opens Google's OAuth
+        browser flow.
+
+    Render:
+        Uses GMAIL_TOKEN_JSON. A browser-based OAuth flow cannot be opened
+        from the Render server, so the token must be authorized beforehand.
+    """
+    creds = _load_gmail_token()
+
+    # Existing valid token
+    if creds and creds.valid:
+        return creds
+
+    # Refresh expired token
+    if creds and creds.expired and creds.refresh_token:
+        try:
+            creds.refresh(Request())
+            _save_gmail_token(creds)
+            return creds
+        except Exception:
             creds = None
 
-    if not creds or not creds.valid:
+    # Render cannot use run_local_server() because there is no local
+    # browser/callback endpoint available to the user.
+    if IS_RENDER:
+        st.error(
+            """
+            ❌ Gmail is not authorized on the Render server.
 
-        if (
-            creds
-            and creds.expired
-            and creds.refresh_token
-        ):
+            Add these Render Environment Variables:
 
-            try:
+            • GMAIL_CREDENTIALS_JSON — complete credentials.json content
+            • GMAIL_TOKEN_JSON — complete authorized gmail_token.json content
 
-                creds.refresh(Request())
+            Do not upload credentials.json or gmail_token.json to GitHub.
+            """
+        )
+        return None
 
-            except Exception:
+    # Local authentication
+    google_credentials = _load_gmail_credentials_config()
 
-                creds = None
+    if not google_credentials:
+        st.error(
+            """
+            ❌ Gmail OAuth credentials were not found.
 
-        if not creds or not creds.valid:
+            For local development, place credentials.json next to app.py
+            or configure the gmail_credentials Streamlit secret.
+            """
+        )
+        return None
 
-            if "gmail_credentials" in st.secrets:
-                flow = InstalledAppFlow.from_client_secrets_dict(
-                    dict(st.secrets["gmail_credentials"]),
-                    SCOPES
-                )
-            elif os.path.exists(CREDENTIALS_FILE):
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    CREDENTIALS_FILE,
-                    SCOPES
-                )
-            else:
-                st.error("❌ Gmail OAuth credentials were not found.")
-                return None
-            
-            creds = flow.run_local_server(
-                port=0
-            )
+    try:
+        flow = InstalledAppFlow.from_client_config(
+            google_credentials,
+            SCOPES
+        )
 
-        with open(
-            TOKEN_FILE,
-            "w"
-        ) as token:
+        creds = flow.run_local_server(port=0)
 
-            token.write(
-                creds.to_json()
-            )
+        _save_gmail_token(creds)
 
-    return creds
+        return creds
+
+    except Exception as e:
+        st.error(f"❌ Gmail authentication failed: {e}")
+        return None
 
 
 # ============================================================
@@ -1311,11 +1403,7 @@ with gmail_tab:
     # CONNECTION STATUS
     # ========================================================
 
-    if (
-        st.session_state.gmail_creds
-        or
-        os.path.exists(TOKEN_FILE)
-    ):
+    if st.session_state.gmail_creds:
 
         st.info(
             "🟢 Gmail is connected."
@@ -1329,20 +1417,7 @@ with gmail_tab:
 
             if st.session_state.gmail_creds is None:
 
-                try:
-
-                    st.session_state.gmail_creds = (
-                        Credentials.from_authorized_user_file(
-                            TOKEN_FILE,
-                            SCOPES
-                        )
-                    )
-
-                except Exception:
-
-                    st.session_state.gmail_creds = (
-                        authenticate_gmail()
-                    )
+                st.session_state.gmail_creds = authenticate_gmail()
 
             if st.session_state.gmail_creds:
 
