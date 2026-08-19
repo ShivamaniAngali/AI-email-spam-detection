@@ -467,6 +467,10 @@ with open(
 # 18. GENERATE COMPARISON GRAPH
 # ============================================================
 
+# ============================================================
+# 18. GENERATE IMPROVED COMPARISON GRAPH
+# ============================================================
+
 metrics = [
     "Accuracy",
     "Precision",
@@ -474,83 +478,150 @@ metrics = [
     "F1-Score"
 ]
 
-# Convert to percentages
-
+# Convert metrics to percentages
 graph_df = results_df.copy()
 
 for metric in metrics:
-
-    graph_df[metric] = (
-        graph_df[metric] * 100
-    )
+    graph_df[metric] = graph_df[metric] * 100
 
 
-plt.figure(
-    figsize=(12, 7)
-)
+# ------------------------------------------------------------
+# CREATE GRAPH
+# ------------------------------------------------------------
 
-x = range(
-    len(graph_df)
-)
+plt.figure(figsize=(14, 8))
+
+x = range(len(graph_df))
 
 width = 0.18
 
-for i, metric in enumerate(metrics):
 
-    values = graph_df[metric]
+# Accuracy
+bars1 = plt.bar(
+    [value - 1.5 * width for value in x],
+    graph_df["Accuracy"],
+    width=width,
+    label="Accuracy"
+)
 
-    positions = [
-        value + (i - 1.5) * width
-        for value in x
-    ]
+# Precision
+bars2 = plt.bar(
+    [value - 0.5 * width for value in x],
+    graph_df["Precision"],
+    width=width,
+    label="Precision"
+)
 
-    plt.bar(
-        positions,
-        values,
-        width=width,
-        label=metric
-    )
+# Recall
+bars3 = plt.bar(
+    [value + 0.5 * width for value in x],
+    graph_df["Recall"],
+    width=width,
+    label="Recall"
+)
 
+# F1-Score
+bars4 = plt.bar(
+    [value + 1.5 * width for value in x],
+    graph_df["F1-Score"],
+    width=width,
+    label="F1-Score"
+)
+
+
+# ------------------------------------------------------------
+# IMPORTANT: ZOOM Y-AXIS
+# ------------------------------------------------------------
+
+plt.ylim(85, 94)
+
+
+# ------------------------------------------------------------
+# ADD EXACT VALUES ABOVE EACH BAR
+# ------------------------------------------------------------
+
+def add_values(bars):
+
+    for bar in bars:
+
+        height = bar.get_height()
+
+        plt.text(
+            bar.get_x() + bar.get_width() / 2,
+            height + 0.08,
+            f"{height:.2f}%",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+            fontweight="bold"
+        )
+
+
+add_values(bars1)
+add_values(bars2)
+add_values(bars3)
+add_values(bars4)
+
+
+# ------------------------------------------------------------
+# GRAPH LABELS
+# ------------------------------------------------------------
 
 plt.xticks(
     list(x),
     graph_df["Model"],
-    rotation=15
+    rotation=10
 )
 
 plt.ylabel(
-    "Score (%)"
+    "Performance (%)",
+    fontsize=12
 )
 
 plt.xlabel(
-    "Machine Learning Model"
+    "Machine Learning Model",
+    fontsize=12
 )
 
 plt.title(
-    "Machine Learning Model Comparison"
+    "Machine Learning Model Performance Comparison",
+    fontsize=16,
+    fontweight="bold"
 )
 
-plt.ylim(
-    0,
-    105
+
+# ------------------------------------------------------------
+# GRID AND LEGEND
+# ------------------------------------------------------------
+
+plt.grid(
+    axis="y",
+    linestyle="--",
+    alpha=0.3
 )
 
-plt.legend()
+plt.legend(
+    fontsize=10
+)
+
+
+# ------------------------------------------------------------
+# SAVE GRAPH
+# ------------------------------------------------------------
 
 plt.tight_layout()
 
 plt.savefig(
     "model_comparison.png",
-    dpi=300
+    dpi=300,
+    bbox_inches="tight"
 )
 
 plt.close()
 
-
 print(
     "Saved: model_comparison.png"
 )
-
 
 # ============================================================
 # 19. FINAL RESULT
