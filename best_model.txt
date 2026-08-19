@@ -1,0 +1,5 @@
+Best Model: Multinomial Naive Bayes
+Accuracy: 91.95%
+Precision: 91.82%
+Recall: 92.09%
+F1-Score: 91.95%
